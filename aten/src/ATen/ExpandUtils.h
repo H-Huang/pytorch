@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ATen/Tensor.h>
+#include <ATen/DimVector.h>
 #include <c10/util/Exception.h>
 
 #include <functional>
@@ -15,6 +16,10 @@ inferExpandGeometry(
     IntArrayRef tensor_sizes,
     IntArrayRef tensor_strides,
     IntArrayRef sizes);
+
+CAFFE2_API std::vector<int64_t> infer_dense_strides(
+    IntArrayRef tensor_sizes,
+    IntArrayRef tensor_strides);
 
 // True if input shapes are expandable
 // NOTE: infer_size did a similar check, please keep them sync if change is needed
