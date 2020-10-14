@@ -2,10 +2,85 @@
 #include <torch/csrc/jit/backends/backend_detail.h>
 #include <torch/csrc/jit/backends/backend_resolver.h>
 #include <torch/csrc/jit/frontend/code_template.h>
+#include <torch/csrc/jit/python/module_python.h>
 #include <torch/csrc/jit/python/pybind_utils.h>
 
 namespace torch {
 namespace jit {
+
+// Selectively lower \p cloned_mod to a backend. \p to_backend
+// is called to lower modules. \p modules_to_lower contains
+// qualified names of submodules of \p cloned_mod that should be lowered.
+void to_backend_selective_impl(
+    Module& cloned_mod,
+    py::function to_backend,
+    const std::vector<std::string>& modules_to_lower) {
+  // For each module that should be lowered:
+  for (const auto& module_to_lower : modules_to_lower) {
+    // Use QualifiedName to parse the qualified module names.
+    c10::QualifiedName qual_module_name(module_to_lower);
+    auto& atoms = qual_module_name.atoms();
+
+    // Record all of the ancestor modules (the last being the parent)
+    // so that the type of the lowered module can be remapped in their
+    // graphs if needed.
+    std::vector<Module> ancestors;
+    ancestors.reserve(atoms.size() - 1);
+
+    // Search through the module hierarchy using the atoms of
+    // qual_module_name until current points to the module to
+    // be lowered while storing references all of the ancestors.
+    Module current = cloned_mod;
+    for (size_t i = 0, e = atoms.size(); i < e; ++i) {
+      IValue submodule = current.attr(atoms[i]);
+      if (submodule.isModule()) {
+        ancestors.emplace_back(current);
+        current = submodule.toModule();
+      } else {
+        std::stringstream err;
+        err << "Attribute named " << atoms[i] << " is not a Module";
+        throw std::runtime_error(err.str());
+      }
+    }
+
+    // Call to_backend on the module that needs to be lowered. It needs to be
+    // wrapped before doing so because _to_jit_backend accepts wrapped modules.
+    // The result needs to be unwrapped in order to access its type below.
+    auto lowered_submodule =
+        py::cast<Module>(to_backend(py::module::import("torch.jit._recursive")
+                                        .attr("wrap_cpp_module")(current))
+                             .attr("_c"));
+
+    // Adjust the parent's type so that the type of the submodule matches
+    // the type of lowered_submodule.
+    Module parent = ancestors.back();
+    auto parent_type = parent.type();
+    parent_type->unsafeChangeAttributeType(
+        qual_module_name.name(), lowered_submodule.type());
+    parent.setattr(qual_module_name.name(), lowered_submodule._ivalue());
+
+    // Fix references to the submodule in the graphs of ancestors' methods.
+    std::unordered_map<TypePtr, TypePtr> type_remap;
+    type_remap[current.type()] = lowered_submodule.type();
+
+    auto type_remap_fn = [&type_remap](TypePtr in) {
+      auto it = type_remap.find(in);
+      if (it == type_remap.end())
+        return in;
+      return it->second;
+    };
+
+    for (auto& ancestor : ancestors) {
+      for (auto& fn : ancestor.type()->methods()) {
+        auto method = ancestor.get_method(fn->name());
+        auto graph = method.graph();
+        graph->remapTypes(type_remap_fn);
+        auto new_schema = fn->getSchema().cloneWithRemappedTypes(type_remap_fn);
+        fn->setSchema(new_schema);
+      }
+    }
+  }
+}
 
 void initJitBackendBindings(PyObject* module) {
   // Bind a function for lowering to each JIT backend. The name of the backend
@@ -233,6 +308,30 @@ void initJitBackendBindings(PyObject* module) {
                 backend_name,
                 py::cast<Module>(orig_module.attr("_c")),
                 method_compile_spec));
+      });
+
+  m.def(
+      "_jit_to_backend_selective",
+      [=](const std::string& backend_name,
+          py::handle orig_module,
+          py::function to_backend,
+          const std::vector<std::string>& modules_to_lower) {
+        if (auto original_module =
+                as_module(py::cast<py::object>(orig_module))) {
+          // Clone the original module so that type modifications don't
+          // interfere with the changes that to_backend_selective_impl will
+          // make.
+          Module& mod = original_module.value();
+          auto cloned_mod = mod.clone();
+          to_backend_selective_impl(cloned_mod, to_backend, modules_to_lower);
+          // Wrap the result in a RecursiveScriptModule because that's what the
+          // caller passed in.
+          return py::module::import("torch.jit._recursive")
+              .attr("wrap_cpp_module")(cloned_mod);
+        }
+
+        throw py::cast_error(c10::str(
+            "Object ", py::str(orig_module), " is not a ScriptModule"));
       });
 }
 } // namespace jit
