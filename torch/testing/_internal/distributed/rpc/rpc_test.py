@@ -35,6 +35,9 @@ from torch.testing._internal.common_utils import (
     load_tests,
     sandcastle_skip_if,
     get_cycles_per_ms,
+    retry_on_connect_failures,
+    ADDRESS_IN_USE,
+    CONNECT_TIMEOUT,
 )
 from torch.testing._internal.dist_utils import (
     dist_init,
@@ -48,7 +51,11 @@ from torch.testing._internal.dist_utils import (
 from torch.testing._internal.distributed.rpc.rpc_agent_test_fixture import (
     RpcAgentTestFixture,
 )
-from torch.testing._internal.common_utils import TemporaryFileName
+
+from torch.testing._internal.common_utils import (
+    TemporaryFileName,
+    find_free_port,
+)
 
 from torch.autograd.profiler_legacy import profile as _profile
 
@@ -4328,7 +4335,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
         rpc.init_rpc(
             name=worker_name(self.rank),
             backend=self.rpc_backend,
-            rank=self.rank,
             rpc_backend_options=self.rpc_backend_options,
         )
         rpc.shutdown()
@@ -4342,7 +4348,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=self.rpc_backend_options,
             )
 
@@ -4354,7 +4359,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=self.rpc_backend_options,
             )
             result = rpc.rpc_sync(worker_name(0), torch.add, args=(torch.tensor(1), torch.tensor(1)))
@@ -4373,7 +4377,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=self.rpc_backend_options,
             )
 
@@ -4386,7 +4389,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=self.rpc_backend_options,
             )
 
@@ -4415,7 +4417,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=options,
             )
 
@@ -4428,9 +4429,9 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
             rpc.init_rpc(
                 name=worker_name(self.rank),
                 backend=self.rpc_backend,
-                rank=self.rank,
                 rpc_backend_options=self.rpc_backend_options,
             )
+            print(f"finish init for rank {self.rank}", flush=True)
 
         dist.barrier()
         if self.rank == 0:
@@ -4447,33 +4448,8 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
         dist.barrier()
         rpc.shutdown()
 
-    @dist_init(setup_rpc=False)
-    def test_init_rpc_without_world_size_without_rank(self):
-        # default initialization uses file init
-        with self.assertRaisesRegex(ValueError, "rank parameter missing"):
-            rpc.init_rpc(
-                name=worker_name(self.rank),
-                backend=self.rpc_backend,
-                rpc_backend_options=self.rpc_backend_options,
-            )
 
-        # env init
-        with self.assertRaisesRegex(ValueError, "environment variable RANK expected"):
-            rpc_backend_options = rpc.TensorPipeRpcBackendOptions(init_method="env://")
-            rpc.init_rpc(
-                name=worker_name(self.rank),
-                backend=self.rpc_backend,
-                rpc_backend_options=rpc_backend_options,
-            )
 
-        # tcp init
-        with self.assertRaisesRegex(ValueError, "rank parameter missing"):
-            rpc_backend_options = rpc.TensorPipeRpcBackendOptions(init_method="tcp://127.0.0.1:23456")
-            rpc.init_rpc(
-                name=worker_name(self.rank),
-                backend=self.rpc_backend,
-                rpc_backend_options=rpc_backend_options,
-            )
 
     @dist_init(setup_rpc=False)
     def test_init_dynamic_and_static_rpc_group(self):
@@ -4503,7 +4479,6 @@ class RpcTest(RpcAgentTestFixture, RpcTestCommon):
                 rpc.init_rpc(
                     name=worker_name(self.rank),
                     backend=self.rpc_backend,
-                    rank=self.rank,
                     rpc_backend_options=self.rpc_backend_options,
                 )
 
