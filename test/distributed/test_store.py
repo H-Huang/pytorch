@@ -175,6 +175,7 @@ class TCPStoreTest(TestCase, StoreTestBase):
 
     @retry_on_connect_failures
     def test_multitenancy(self):
+        print("hi")
         addr = DEFAULT_HOSTNAME
         port = common.find_free_port()
 
