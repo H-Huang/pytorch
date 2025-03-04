@@ -6,7 +6,11 @@ import sys
 import torch
 from torch._inductor.compile_fx import compile_fx
 from torch._inductor.test_case import TestCase
-from torch.testing._internal.common_utils import TEST_WITH_ASAN, TEST_WITH_ROCM
+from torch.testing._internal.common_utils import (
+    IS_LINUX,
+    TEST_WITH_ASAN,
+    TEST_WITH_ROCM,
+)
 from torch.testing._internal.inductor_utils import (
     _check_has_dynamic_shape,
     GPU_TYPE,
@@ -72,7 +76,7 @@ def check_codegen(
     def run(*ex, **kwargs):
         return model(*ex, **kwargs)
 
-    run = torch._dynamo.optimize(compile_fx_wrapper, nopython=True)(run)
+    run = torch.compile(run, backend=compile_fx_wrapper, fullgraph=True)
 
     if is_cpp_code:
         _, code = run_and_get_cpp_code(run, *example_inputs, **kwargs)
@@ -110,7 +114,6 @@ test_failures = {
     "test_conv2d_channels_last_dynamic_shapes": TestFailure(("cpu",)),
     "test_conv3d_dynamic_shapes": TestFailure(("cpu",)),
     "test_conv3d_channels_last_dynamic_shapes": TestFailure(("cpu",)),
-    "test_mutable_custom_op_fixed_layout2_dynamic_shapes": TestFailure(("cpu",)),
     "test_expand_dynamic_shapes": TestFailure(("cpu",)),
     "test_full_boolean_dynamic_shapes": TestFailure(("cpu",)),
     "test_glu_dynamic_shapes": TestFailure(("cpu",)),
@@ -120,7 +123,7 @@ test_failures = {
     "test_stack_dynamic_shapes": TestFailure(("cpu",)),
     "test_tensor2_dynamic_shapes": TestFailure(("cpu",)),
     "test_tensor3_dynamic_shapes": TestFailure(("cpu",)),
-    "test_to_device_constant_dynamic_shapes": TestFailure("cpu"),
+    "test_to_device_constant_dynamic_shapes": TestFailure(("cpu",)),
     "test_upsample_nearest2d_backward_dynamic_shapes": TestFailure(("cpu",)),
     "test_views3_dynamic_shapes": TestFailure(("cpu",)),
     "test_views4_dynamic_shapes": TestFailure(("cpu",)),
@@ -130,6 +133,7 @@ test_failures = {
     "test_repeat_as_strided_dynamic_shapes": TestFailure(("cpu",)),
     "test_mul_index_expr_dynamic_shapes": TestFailure(("cpu",)),
     "test_flip_cat_dynamic_shapes": TestFailure(("cpu",)),
+    "test_pad_single_dynamic_shapes": TestFailure(("cpu",)),
     #
     # Failed to find for loop/triton kernel:
     #
@@ -159,15 +163,17 @@ test_failures = {
     "test_empty1_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_empty2_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_empty_strided_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
-    "test_bucketize_dynamic_shapes": TestFailure("cpu"),
-    "test_bucketize_default_kwargs_dynamic_shapes": TestFailure("cpu"),
-    "test_bucketize_int_dynamic_shapes": TestFailure("cpu"),
+    "test_bucketize_nd_tiling_False_dynamic_shapes": TestFailure(("cpu",)),
+    "test_bucketize_nd_tiling_True_dynamic_shapes": TestFailure(("cpu",)),
+    "test_bucketize_default_kwargs_dynamic_shapes": TestFailure(("cpu",)),
+    "test_bucketize_int_dynamic_shapes": TestFailure(("cpu",)),
+    "test_searchsorted_dynamic_shapes": TestFailure(("cpu",)),
     "test_like_rands_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_linspace2_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_linspace3_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
+    "test_linspace4_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_logcumsumexp_dynamic_shapes": TestFailure(("cpu",)),
     "test_logcumsumexp_zero_dim_dynamic_shapes": TestFailure(("cpu",)),
-    "test_max_pool2d6_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_max_pool2d8_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_max_pool2d_with_indices_backward5_dynamic_shapes": TestFailure(
         ("cpu", "cuda")
@@ -229,6 +235,7 @@ test_failures = {
     "test_pointwise_laguerre_polynomial_l_dynamic_shapes": TestFailure(("cuda", "xpu")),
     "test_pointwise_legendre_polynomial_p_dynamic_shapes": TestFailure(("cuda", "xpu")),
     "test_polar_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu"), is_skip=True),
+    "test_randint_distribution_dynamic_shapes": TestFailure(("cuda", "xpu")),
     "test_randn_generator_dynamic_shapes": TestFailure(("cpu",)),
     "test_randn_like_empty_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_single_elem_dynamic_shapes": TestFailure(("cpu",)),
@@ -246,14 +253,14 @@ test_failures = {
     "test_views5_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_view_detach_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_view_on_aliased_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
-    "test_linear_float64_dynamic_shapes": TestFailure("cpu"),
+    "test_linear_float64_dynamic_shapes": TestFailure(("cpu",)),
     "test_adaptive_avg_pool_with_output_size_0_dynamic_shapes": TestFailure(
         ("cpu", "cuda", "xpu")
     ),
     "test_zero_element_mutation_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_custom_op_3_dynamic_shapes": TestFailure(("cpu", "cuda", "xpu")),
     "test_custom_op_fixed_layout_sequential_dynamic_shapes": TestFailure(
-        ("cpu", "cuda", "xpu")
+        ("cuda", "xpu") if IS_LINUX else ("cpu", "cuda", "xpu")
     ),
     "test_cat_uint8_dynamic_shapes": TestFailure(
         ("cpu",)
